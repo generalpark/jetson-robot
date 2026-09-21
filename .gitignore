@@ -16,3 +16,12 @@ log/
 # OS
 .DS_Store
 Thumbs.db
+
+# PlatformIO 빌드 산출물·의존성 (수백 MB, 빌드하면 다시 생김)
+.pio/
+
+# 파인튜닝 결과물 (어댑터·데이터셋·측정 결과는 재생성 가능)
+finetune/adapter*/
+finetune/*.jsonl
+finetune/result_*.json
+finetune/hf_cache/
