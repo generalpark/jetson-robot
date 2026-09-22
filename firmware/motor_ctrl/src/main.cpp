@@ -24,6 +24,10 @@ constexpr int L_LPWM = 26;   // 왼쪽 역방향
 constexpr int R_RPWM = 32;   // 오른쪽 정방향
 constexpr int R_LPWM = 33;   // 오른쪽 역방향
 constexpr int LED    = 2;    // 온보드 LED (드라이버 대용 확인)
+// PWM이 실제로 나가는지 확인하기 위한 입력 핀.
+// GPIO25(L_RPWM)와 점퍼선으로 연결하면 보드가 자기 출력을 자기가 읽는다.
+// 오실로스코프나 로직 애널라이저 없이 듀티를 검증하기 위한 것이다.
+constexpr int VERIFY_IN = 34;   // 입력 전용 핀
 
 // --- LEDC(ESP32 하드웨어 PWM) 채널 ---
 constexpr int CH_L_R = 0, CH_L_L = 1, CH_R_R = 2, CH_R_L = 3, CH_LED = 4;
@@ -61,9 +65,34 @@ void stopAll(const char* why) {
   Serial.printf("STOP (%s)\n", why);
 }
 
+void verifyPwm() {
+  // PWM 한 주기(20kHz = 50us)보다 훨씬 오래 표본을 모아
+  // HIGH로 읽힌 비율을 센다. 샘플링이 PWM과 동기화돼 있지 않으므로
+  // 표본이 충분하면 그 비율이 듀티에 수렴한다.
+  Serial.println("duty,measured,expected,error");
+  const int duties[] = {0, 32, 64, 96, 128, 160, 192, 224, 255};
+  for (int d : duties) {
+    ledcWrite(CH_L_L, 0);
+    ledcWrite(CH_L_R, d);
+    delay(80);                       // 출력이 안정될 때까지 기다린다
+    const uint32_t N = 20000;
+    uint32_t high = 0;
+    for (uint32_t i = 0; i < N; i++) {
+      if (digitalRead(VERIFY_IN)) high++;
+    }
+    float measured = (float)high / N;
+    float expected = (float)d / 255.0f;
+    Serial.printf("%d,%.4f,%.4f,%+.4f", d, measured, expected, measured - expected);
+    Serial.println();
+  }
+  ledcWrite(CH_L_R, 0);
+  Serial.println("verify_done");
+}
+
 void setup() {
   Serial.begin(115200);
   delay(200);
+  pinMode(VERIFY_IN, INPUT);
 
   ledcSetup(CH_L_R, PWM_FREQ, PWM_BITS); ledcAttachPin(L_RPWM, CH_L_R);
   ledcSetup(CH_L_L, PWM_FREQ, PWM_BITS); ledcAttachPin(L_LPWM, CH_L_L);
@@ -73,7 +102,7 @@ void setup() {
 
   stopAll("boot");
   last_cmd_ms = millis();
-  Serial.println("ready: L/R <-255..255>, S=stop, ?=status");
+  Serial.println("ready: L/R <-255..255>, S=stop, ?=status, V=verify PWM");
 }
 
 void handleLine(String line) {
@@ -82,6 +111,7 @@ void handleLine(String line) {
   char c = toupper(line[0]);
 
   if (c == 'S') { stopAll("command"); last_cmd_ms = millis(); return; }
+  if (c == 'V') { verifyPwm(); last_cmd_ms = millis(); return; }
   if (c == '?') {
     Serial.printf("L=%d R=%d  timeout=%s  since_cmd=%lums\n",
                   speed_l, speed_r, stopped_by_timeout ? "Y" : "N",
