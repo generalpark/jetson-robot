@@ -1,8 +1,8 @@
 #!/bin/bash
-# 주행 명령 모델(Q4_K_M GGUF)을 llama-server로 상주시킨다.
+# 주행 명령 모델(Q4_K_M GGUF, 주행 아닌 문장 거부 학습판)을 llama-server로 상주시킨다.
 # 모델을 한 번만 올려두고 명령마다 HTTP로 묻는다 — nl2cmdvel.sh가 여기에 붙는다.
 # 사용법: ./llama_server.sh [GGUF]   (Ctrl+C 로 종료)
-MODEL="${1:-/mnt/nvme/finetune/work/drive_cmd_q4km.gguf}"
+MODEL="${1:-/mnt/nvme/finetune/work/drive_cmd_rej_q4km.gguf}"
 BIN=/mnt/nvme/llama.cpp/build/bin/llama-server
 DF=/sys/class/devfreq/17000000.gpu
 

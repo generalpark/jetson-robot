@@ -12,6 +12,8 @@ import argparse
 import json
 import random
 
+import offtopic
+
 # 학습/테스트에서 쓰는 어휘를 나눠 둔다. HOLDOUT은 테스트에만 등장한다.
 SPEED = {
     "train": {"천천히": 0.15, "느리게": 0.15, "": 0.3, "보통 속도로": 0.3,
@@ -124,6 +126,8 @@ def make_sample(split):
     return text, out
 
 
+REJECT = json.dumps({"reject": True})
+
 HOLDOUT_WORDS = ["살살", "전속력으로", "앞쪽으로", "뒤쪽으로", "좌측으로",
                  "우측으로", "꺾어", "세워", "가봐"]
 
@@ -140,6 +144,8 @@ def main():
     ap.add_argument("--out", default=".")
     ap.add_argument("--tag", default="", help="파일명 접미사 (train{tag}.jsonl)")
     ap.add_argument("--rich", action="store_true", help="학습 어휘를 넓힌 판으로 생성")
+    ap.add_argument("--reject", type=int, default=0,
+                    help="주행이 아닌 문장(정답 reject)을 학습에 N개 추가. offtopic.py 참고")
     args = ap.parse_args()
 
     global RICH_ON
@@ -165,11 +171,29 @@ def main():
         made[split] = rows
         made.setdefault("_all", set()).update(seen)
 
+        # 주행 데이터를 다 만든 뒤 별도 난수로 붙인다. 주행 부분은 --reject 없이
+        # 만든 것과 한 글자도 다르지 않아야 거부 데이터를 넣은 효과만 따로 잴 수 있다.
+        if args.reject and split != "test":
+            rng = random.Random(1 if split == "train" else 2)
+            texts = [t for t, _ in offtopic.pool("train")]
+            k = min(args.reject, len(texts)) if split == "train" else max(1, args.reject // 16)
+            rows = rows + [{"instruction": t, "output": REJECT} for t in rng.sample(texts, k)]
+
         path = f"{args.out}/{split}{args.tag}.jsonl"
         with open(path, "w", encoding="utf-8") as f:
             for r in rows:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
         print(f"{split}: {len(rows)}개 -> {path}")
+
+    if args.reject:
+        # 거부 평가셋은 학습 문장과 겹치지 않는 목록으로 따로 만든다
+        test_pool = offtopic.pool("test")
+        path = f"{args.out}/test_offtopic.jsonl"
+        with open(path, "w", encoding="utf-8") as f:
+            for t, kind in test_pool:
+                f.write(json.dumps({"instruction": t, "output": REJECT, "kind": kind},
+                                   ensure_ascii=False) + "\n")
+        print(f"test_offtopic: {len(test_pool)}개 -> {path}")
 
     print("\n[예시]")
     for r in made["train"][:3]:

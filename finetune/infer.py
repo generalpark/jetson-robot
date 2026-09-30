@@ -98,6 +98,11 @@ def main():
     except json.JSONDecodeError as e:
         fail(str(e), m.group(0))
 
+    # 주행 명령이 아니라고 판단한 경우. 종료 코드 2로 구분해 상위가 움직이지 않게 한다
+    if cmd.get("reject") is True:
+        print(f"[infer] {ms:.0f} ms, 주행 명령이 아님", file=sys.stderr)
+        sys.exit(2)
+
     # 로봇에 넘기기 전에 형식을 확인한다. 값이 빠진 채로 내려가면
     # 상위에서 0으로 읽혀 의도하지 않게 움직일 수 있다.
     missing = [k for k in KEYS if k not in cmd]

@@ -52,13 +52,36 @@ def extract(text):
         return None
 
 
+METRICS = ("parse", "schema", "sign", "exact", "reject", "moves")
+
+
+def is_command(p):
+    return isinstance(p, dict) and all(
+        k in p and isinstance(p[k], (int, float)) and not isinstance(p[k], bool) for k in KEYS)
+
+
+def is_reject(p):
+    return isinstance(p, dict) and p.get("reject") is True
+
+
+def moves(p):
+    """이 출력을 그대로 로봇에 보내면 움직이는가."""
+    return is_command(p) and p["duration"] > 0 and (
+        abs(p["linear"]) > 1e-9 or abs(p["angular"]) > 1e-9)
+
+
 def score(pred, gold, tol=0.02):
-    r = {"parse": 0, "schema": 0, "sign": 0, "exact": 0}
+    r = {"parse": 0, "schema": 0, "sign": 0, "exact": 0,
+         "reject": int(is_reject(pred)), "moves": int(moves(pred))}
+    if is_reject(gold):
+        # 주행이 아닌 문장: 거부했으면 정답이다. 부호·스키마는 해당 없음
+        r["parse"] = int(pred is not None)
+        r["exact"] = r["reject"]
+        return r
     if pred is None:
         return r
     r["parse"] = 1
-    if not all(k in pred and isinstance(pred[k], (int, float)) and not isinstance(pred[k], bool)
-               for k in KEYS):
+    if not is_command(pred):
         return r
     r["schema"] = 1
     sign = lambda v: (v > 1e-9) - (v < -1e-9)
@@ -95,7 +118,7 @@ def main():
     if args.limit:
         rows = rows[: args.limit]
 
-    totals = {"parse": 0, "schema": 0, "sign": 0, "exact": 0}
+    totals = dict.fromkeys(METRICS, 0)
     samples, lat = [], []
     BS = 16
     for i in range(0, len(rows), BS):
@@ -134,6 +157,8 @@ def main():
     print(f"  스키마 일치      {m['schema']:5.1f}%")
     print(f"  방향(부호) 정확  {m['sign']:5.1f}%")
     print(f"  값 완전일치      {m['exact']:5.1f}%")
+    print(f"  거부             {m['reject']:5.1f}%")
+    print(f"  움직이는 출력    {m['moves']:5.1f}%")
     print("\n[출력 예시]")
     for s in samples[:5]:
         print(f"  {s['in']}")

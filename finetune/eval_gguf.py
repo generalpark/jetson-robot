@@ -13,9 +13,7 @@ import json
 import time
 import urllib.request
 
-from evaluate import build_messages, extract, score
-
-KEYS = ("parse", "schema", "sign", "exact")
+from evaluate import METRICS as KEYS, build_messages, extract, score
 
 
 def query(url, messages, max_tokens=64, timeout=120):
@@ -60,10 +58,7 @@ def main():
     res = {
         "label": args.label,
         "n": n,
-        "parse": round(100 * totals["parse"] / n, 1),
-        "schema": round(100 * totals["schema"] / n, 1),
-        "sign": round(100 * totals["sign"] / n, 1),
-        "exact": round(100 * totals["exact"] / n, 1),
+        **{k: round(100 * totals[k] / n, 1) for k in KEYS},
         "req_ms_mean": round(sum(lat) / n, 1),
     }
     print(json.dumps(res, indent=2))

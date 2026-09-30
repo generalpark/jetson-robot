@@ -22,7 +22,13 @@ if ! curl -sf "${LLAMA}/health" >/dev/null; then
 fi
 
 echo "[1/3] 명령 해석: ${INSTRUCTION}"
-CMD_JSON=$(python3 "${WORK}/infer.py" --server "${LLAMA}/v1/chat/completions" "${INSTRUCTION}")
+RC=0
+CMD_JSON=$(python3 "${WORK}/infer.py" --server "${LLAMA}/v1/chat/completions" "${INSTRUCTION}") || RC=$?
+if [ "${RC}" -eq 2 ]; then
+  echo "      -> 주행 명령이 아니라서 움직이지 않는다."
+  exit 0
+fi
+[ "${RC}" -eq 0 ] || exit "${RC}"
 
 echo "      -> ${CMD_JSON}"
 
