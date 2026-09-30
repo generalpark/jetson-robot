@@ -109,4 +109,5 @@ ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.3}}'
 | `demo_led.py` | 듀티 변화 시연 |
 | `test_uros.sh` | ROS 2 토픽 연동 확인 |
 | `nl2cmdvel.sh` | 자연어 → 파인튜닝 모델(llama-server) → `/cmd_vel` |
+| `cmd_vel_bridge.py` | 상주 `/cmd_vel` 브릿지. 로컬 TCP로 명령을 받아 10 Hz 발행, 새 명령이 덮어씀 |
 | `pub_cmd_vel.py` | `/cmd_vel`을 정확히 duration초 발행 후 정지 명령 (ESP32 연결 뒤부터 계측) |

@@ -26,6 +26,11 @@ JSON_RE = re.compile(r"\{[^{}]*\}", re.S)
 KEYS = ("linear", "angular", "duration")
 # 학습 데이터의 duration은 0~10초다. 그 밖의 값은 모델이 잘못 읽은 것으로 본다.
 MAX_DURATION = 10.0
+# 정지는 모델에 맡기지 않는다. 거부 학습 모델이 처음 보는 정지어 "세워"를 거부했다.
+# 이 단어가 보이면 모델을 부르지 않고 바로 멈춘다. "계획을 세워"처럼 엉뚱하게 걸려도
+# 결과는 정지라 안전하다 — 틀린 정지는 불편하고, 틀린 주행은 위험하다.
+STOP_RE = re.compile(r"멈춰|멈추|멈춤|정지|그만|스톱|스탑|세워|중지|브레이크|stop", re.I)
+STOP = {"linear": 0.0, "angular": 0.0, "duration": 0.0}
 
 
 def messages(text):
@@ -83,9 +88,18 @@ def main():
     args = ap.parse_args()
     text = " ".join(args.instruction)
 
+    if STOP_RE.search(text):
+        print("[infer] 정지어 — 모델 생략", file=sys.stderr)
+        print(json.dumps(STOP))
+        return
+
     t0 = time.perf_counter()
     if args.server:
-        out = generate_server(text, args.server)
+        try:
+            out = generate_server(text, args.server)
+        except OSError as e:     # URLError 포함: 서버가 없거나 응답이 없다
+            print(f"[!] llama-server 연결 실패({e}). ~/robot/llama_server.sh 실행", file=sys.stderr)
+            sys.exit(1)
     else:
         out = generate_local(text, args.base, args.adapter)
     ms = (time.perf_counter() - t0) * 1000

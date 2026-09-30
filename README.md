@@ -17,7 +17,7 @@
 | **안전** | "오늘 날씨 어때"에도 움직이던 문제. 거부 학습으로 주행 아닌 문장 60건 중 움직임 **57~100% → 0%**, 학습 어휘 정확도 100% 유지 | [finetune/](finetune/README.md#주행이-아닌-문장-거부-2026-10-01) |
 | **평가 설계** | 검증 손실 0.000027이지만 학습 어휘 **100%** vs 미학습 어휘 **49.3%**. 오답 38건 전부 미학습 어휘 | [finetune/](finetune/README.md) |
 | **엣지 추론** | **4,115ms → 408ms (10.1배)**, 모델 942 → 374MB, 정확도 −0.7%p. 병목 4개를 측정으로 하나씩 제거 | [BENCHMARK](finetune/BENCHMARK.md) |
-| **경로 통합** | 문장 → ESP32 수신까지 실측. 드문드문 오는 요청은 GPU 클럭이 안 올라 **810 → 420ms**(서버 동작 중에만 클럭 고정). 주행 시간이 ROS 기동 시간만큼 짧아지던 버그 수정 | [BENCHMARK](finetune/BENCHMARK.md#실제-주행-경로에서-2026-10-01) |
+| **경로 통합** | 문장 → ESP32 수신까지 실측. 드문드문 오는 요청은 GPU 클럭이 안 올라 **810 → 420ms**(서버 동작 중에만 클럭 고정). 주행 시간이 ROS 기동 시간만큼 짧아지던 버그 수정. 상주 브릿지로 **2.5 → 0.6초**, 달리는 중 정지 0.17초 | [BENCHMARK](finetune/BENCHMARK.md#실제-주행-경로에서-2026-10-01) |
 | **장애 진단** | 학습 중 무로그 재부팅. 전원 가설을 측정으로 기각하고, PyTorch 캐시 팽창(5.6GB)이 원인임을 찾아 해결 | [finetune/](finetune/README.md#학습-중-보드-리셋--원인은-메모리였다) |
 
 ---
@@ -37,9 +37,9 @@
    micro-ROS Agent ──USB 시리얼──▶ ESP32 ──PWM 20kHz──▶ BTS7960 ×2 ──▶ DC 모터 ×4
 ```
 
-`firmware/nl2cmdvel.sh` 한 줄로 이 경로 전체가 실행됩니다. 모델은 llama-server로 상주하고,
-문장 입력부터 ESP32가 첫 명령을 받기까지 **2.2~2.7초**입니다. 그중 추론은 0.42초이고,
-나머지는 명령마다 ROS 컨테이너를 띄우는 비용이라 이것을 상주 노드로 없애는 것이 다음 단계입니다.
+`firmware/nl2cmdvel.sh` 한 줄로 이 경로 전체가 실행됩니다. 모델과 ROS 노드가 모두 상주해,
+문장 입력부터 ESP32가 첫 명령을 받기까지 **0.6초**(처음 연결했을 때 2.2~2.7초)입니다.
+"멈춰" 같은 정지어는 모델을 거치지 않고 **0.17초** 만에 진행 중인 명령을 덮어씁니다.
 
 ---
 
@@ -124,6 +124,7 @@ scripts/     Jetson 쪽 USB 확인, micro-ROS Agent, 명령 해석 서버(llama-
 | `scripts/check_usb.sh` | ESP32(USB 시리얼) 인식 확인 — 장치 노드, `lsusb`, 커널 로그를 한 번에 |
 | `scripts/uros_agent.sh` | micro-ROS Agent 실행 (컨테이너) |
 | `scripts/llama_server.sh` | 명령 해석 모델(Q4_K_M) 상주. 떠 있는 동안만 GPU 최저 클럭 고정, 종료 시 원복 |
+| `scripts/cmd_bridge.sh` | `/cmd_vel` 브릿지 상주. 명령을 로컬 TCP로 받아 10 Hz 발행, 새 명령이 진행 중 명령을 덮어씀 |
 | `scripts/ros2sh.sh` | ROS2 셸 진입 — 토픽 확인용 |
 
 ### 통신 검증 순서
@@ -144,7 +145,9 @@ scripts/     Jetson 쪽 USB 확인, micro-ROS Agent, 명령 해석 서버(llama-
 ```bash
 ./scripts/uros_agent.sh                           # 터미널 A — Agent (띄운 뒤 ESP32 리셋)
 ./scripts/llama_server.sh                         # 터미널 B — 명령 해석 서버
-./firmware/nl2cmdvel.sh "앞으로 천천히 2초 동안 가"   # 터미널 C
+./scripts/cmd_bridge.sh                           # 터미널 C — /cmd_vel 브릿지
+./firmware/nl2cmdvel.sh "앞으로 천천히 2초 동안 가"   # 터미널 D
+./firmware/nl2cmdvel.sh "멈춰"                     # 달리는 중에도 바로 정지
 ```
 
 ---
@@ -177,6 +180,7 @@ scripts/     Jetson 쪽 USB 확인, micro-ROS Agent, 명령 해석 서버(llama-
 - [ ] 구동부 조립 · 실주행 (부품 입고 완료)
 - [ ] 엔코더 인터럽트 카운트 → 오도메트리 발행
 - [x] llama.cpp 추론을 `/cmd_vel` 경로에 연결, 문장 → ESP32 수신 실측
-- [x] 주행이 아닌 문장 거부 학습 (배포 모델 교체)
+- [x] 주행이 아닌 문장 거부 학습 (배포 모델 교체), 정지어는 규칙으로 먼저 처리
+- [x] 상주 `/cmd_vel` 브릿지 — 문장 → ESP32 0.6초, 달리는 중 정지
 - [ ] 카메라 · IMU 연동
 - [ ] SLAM / 경로계획
