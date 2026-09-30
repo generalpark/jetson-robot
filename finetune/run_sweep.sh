@@ -7,7 +7,7 @@ cd /mnt/nvme/finetune/work
 DOCKER_ARGS="--rm -e HF_HUB_DISABLE_PROGRESS_BARS=1 \
   -v /mnt/nvme/finetune/work:/work \
   -v /mnt/nvme/finetune/hf_cache:/mnt/nvme/finetune/hf_cache \
-  -w /work finetune:jetson"
+  -e PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.6 -w /work finetune:jetson"
 
 for n in "$@"; do
   echo "##### train=${n} #####"

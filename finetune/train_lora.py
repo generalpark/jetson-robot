@@ -14,7 +14,38 @@ import torch
 from datasets import Dataset
 from peft import LoraConfig, get_peft_model
 from transformers import (AutoModelForCausalLM, AutoTokenizer,
-                          DataCollatorForSeq2Seq, Trainer, TrainingArguments)
+                          DataCollatorForSeq2Seq, Trainer, TrainerCallback,
+                          TrainingArguments)
+
+class MemLog(TrainerCallback):
+    """Per-step memory trace, fsync'd so it survives an OOM kill or reset.
+
+    On Jetson the GPU shares system RAM, so a run can starve the whole OS.
+    Separating torch's live tensors (allocated) from its cache (reserved)
+    from what the kernel still has free tells a leak from allocator bloat.
+    """
+
+    def __init__(self, path):
+        self.f = open(path, "w", encoding="utf-8")
+        self.f.write("step,alloc_MB,reserved_MB,peak_alloc_MB,memavail_MB" + chr(10))
+
+    def _avail(self):
+        for line in open("/proc/meminfo"):
+            if line.startswith("MemAvailable"):
+                return int(line.split()[1]) // 1024
+        return -1
+
+    def on_step_end(self, args, state, control, **kw):
+        mb = 1024 * 1024
+        row = [state.global_step,
+               torch.cuda.memory_allocated() // mb,
+               torch.cuda.memory_reserved() // mb,
+               torch.cuda.max_memory_allocated() // mb,
+               self._avail()]
+        self.f.write(",".join(str(v) for v in row) + chr(10))
+        self.f.flush()
+        os.fsync(self.f.fileno())
+
 
 SYSTEM = (
     "너는 로봇 주행 제어기다. 사용자의 주행 명령을 JSON 하나로만 변환한다.\n"
@@ -57,7 +88,17 @@ def main():
     ap.add_argument("--lr", type=float, default=2e-4)
     ap.add_argument("--rank", type=int, default=16)
     ap.add_argument("--max-len", type=int, default=256)
+    ap.add_argument("--memlog", default=None, help="write per-step memory trace here")
+    ap.add_argument("--mem-fraction", type=float, default=0.6,
+                    help="cap on the CUDA caching allocator; 0 disables")
     args = ap.parse_args()
+    if args.mem_fraction > 0:
+        # Jetson has no dedicated VRAM: whatever the caching allocator reserves
+        # comes out of system RAM. Measured on 2026-09-30, live tensors stayed at
+        # ~1.1 GB (peak 2.2 GB) while the cache grew to 5.6 GB and starved the OS,
+        # which ended in an OOM kill or a silent board reset. Capping it makes the
+        # allocator free cached blocks and retry instead of taking more RAM.
+        torch.cuda.set_per_process_memory_fraction(args.mem_fraction)
 
     tok = AutoTokenizer.from_pretrained(args.base)
     if tok.pad_token is None:
@@ -104,6 +145,7 @@ def main():
         model=model, args=targs,
         train_dataset=ds_tr, eval_dataset=ds_va,
         data_collator=DataCollatorForSeq2Seq(tok, padding=True, label_pad_token_id=IGNORE),
+        callbacks=[MemLog(args.memlog)] if args.memlog else None,
     )
     trainer.train()
 
