@@ -4,7 +4,7 @@
 부품 선정부터 펌웨어 · 모델 학습 · 엣지 추론 최적화까지 직접 만든 기록입니다.
 연산은 Jetson Orin Nano, 실시간 제어는 MCU로 나눴습니다.
 
-> 🚧 2026-09-30 기준 — 제어부 · 모델 · 추론 최적화 완료, 구동부 부품 입고. 조립 · 실주행 전
+> 🚧 2026-10-01 기준 — 제어부 · 모델 · 추론 최적화 완료, 문장 → ESP32 경로 연결 확인. 조립 · 실주행 전
 
 ---
 
@@ -16,6 +16,7 @@
 | **모델 학습** | 자연어 → ROS 2 Twist JSON. 값 정확도 few-shot **2.0% → LoRA 74.7%** (전체 파라미터의 1.75%만 학습) | [finetune/](finetune/README.md) |
 | **평가 설계** | 검증 손실 0.000027이지만 학습 어휘 **100%** vs 미학습 어휘 **49.3%**. 오답 38건 전부 미학습 어휘 | [finetune/](finetune/README.md) |
 | **엣지 추론** | **4,115ms → 408ms (10.1배)**, 모델 942 → 374MB, 정확도 −0.7%p. 병목 4개를 측정으로 하나씩 제거 | [BENCHMARK](finetune/BENCHMARK.md) |
+| **경로 통합** | 문장 → ESP32 수신까지 실측. 드문드문 오는 요청은 GPU 클럭이 안 올라 **810 → 420ms**(서버 동작 중에만 클럭 고정). 주행 시간이 ROS 기동 시간만큼 짧아지던 버그 수정 | [BENCHMARK](finetune/BENCHMARK.md#실제-주행-경로에서-2026-10-01) |
 | **장애 진단** | 학습 중 무로그 재부팅. 전원 가설을 측정으로 기각하고, PyTorch 캐시 팽창(5.6GB)이 원인임을 찾아 해결 | [finetune/](finetune/README.md#학습-중-보드-리셋--원인은-메모리였다) |
 
 ---
@@ -28,14 +29,16 @@
           ▼   Jetson Orin Nano 8GB
  ┌───────────────────────────────┐
  │ Qwen2.5-0.5B + LoRA           │  → {"linear": 0.15, "angular": 0.0, "duration": 3.0}
+ │ llama.cpp Q4_K_M (상주 서버)  │
  └───────────────────────────────┘
           │  ROS 2 /cmd_vel (geometry_msgs/Twist)
           ▼
    micro-ROS Agent ──USB 시리얼──▶ ESP32 ──PWM 20kHz──▶ BTS7960 ×2 ──▶ DC 모터 ×4
 ```
 
-`firmware/nl2cmdvel.sh` 한 줄로 이 경로 전체가 실행됩니다. 현재 모델 추론은 transformers로 돌고,
-llama.cpp Q4 최적화 버전(0.41초)을 이 경로에 연결하는 것이 다음 단계입니다.
+`firmware/nl2cmdvel.sh` 한 줄로 이 경로 전체가 실행됩니다. 모델은 llama-server로 상주하고,
+문장 입력부터 ESP32가 첫 명령을 받기까지 **2.2~2.7초**입니다. 그중 추론은 0.42초이고,
+나머지는 명령마다 ROS 컨테이너를 띄우는 비용이라 이것을 상주 노드로 없애는 것이 다음 단계입니다.
 
 ---
 
@@ -110,7 +113,7 @@ ESP32(CP2102) 인식을 위해 `cp210x` 드라이버 로드를 확인하고, 사
 firmware/    ESP32 펌웨어 — 시리얼 단독 테스트용(motor_ctrl), micro-ROS 노드(motor_uros),
              자연어 → /cmd_vel 스크립트(nl2cmdvel.sh)
 finetune/    데이터 생성 · LoRA 학습 · 평가 · 추론 최적화 · 진단 스크립트, 측정 기록
-scripts/     Jetson 쪽 USB 확인, micro-ROS Agent, ROS 2 셸
+scripts/     Jetson 쪽 USB 확인, micro-ROS Agent, 명령 해석 서버(llama-server), ROS 2 셸
 ```
 
 ## 스크립트
@@ -119,6 +122,7 @@ scripts/     Jetson 쪽 USB 확인, micro-ROS Agent, ROS 2 셸
 |---|---|
 | `scripts/check_usb.sh` | ESP32(USB 시리얼) 인식 확인 — 장치 노드, `lsusb`, 커널 로그를 한 번에 |
 | `scripts/uros_agent.sh` | micro-ROS Agent 실행 (컨테이너) |
+| `scripts/llama_server.sh` | 명령 해석 모델(Q4_K_M) 상주. 떠 있는 동안만 GPU 최저 클럭 고정, 종료 시 원복 |
 | `scripts/ros2sh.sh` | ROS2 셸 진입 — 토픽 확인용 |
 
 ### 통신 검증 순서
@@ -131,6 +135,16 @@ scripts/     Jetson 쪽 USB 확인, micro-ROS Agent, ROS 2 셸
 ```
 
 > micro-ROS Agent 옵션은 `--dev`가 아니라 **`-D`** 입니다. 문서마다 다르게 적혀 있어 실행이 안 되는 원인이 됩니다.
+
+> ESP32는 **부팅할 때 한 번만** Agent에 접속합니다. Agent를 먼저 띄운 뒤 ESP32의 EN(리셋) 버튼을 누르세요.
+
+### 자연어 주행
+
+```bash
+./scripts/uros_agent.sh                           # 터미널 A — Agent (띄운 뒤 ESP32 리셋)
+./scripts/llama_server.sh                         # 터미널 B — 명령 해석 서버
+./firmware/nl2cmdvel.sh "앞으로 천천히 2초 동안 가"   # 터미널 C
+```
 
 ---
 
@@ -161,6 +175,6 @@ scripts/     Jetson 쪽 USB 확인, micro-ROS Agent, ROS 2 셸
 - [x] 학습 중 보드 리셋 원인 규명 · 해결 (메모리)
 - [ ] 구동부 조립 · 실주행 (부품 입고 완료)
 - [ ] 엔코더 인터럽트 카운트 → 오도메트리 발행
-- [ ] llama.cpp 추론을 `/cmd_vel` 경로에 연결
+- [x] llama.cpp 추론을 `/cmd_vel` 경로에 연결, 문장 → ESP32 수신 실측
 - [ ] 카메라 · IMU 연동
 - [ ] SLAM / 경로계획

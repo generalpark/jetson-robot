@@ -93,7 +93,8 @@ ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.3}}'
 - PlatformIO를 venv에 설치하면 `~/.platformio/penv` 가 없어 micro-ROS 의존성
   빌드가 실패한다. 해당 경로로 심볼릭 링크를 걸어 해결했다
 - 이 보드는 DTR/RTS 자동 리셋이 동작하지 않는다. 업로드할 때 **BOOT를 누른 채로**
-  둬야 다운로드 모드로 들어간다
+  둬야 다운로드 모드로 들어간다. 단, 2026-10-01 Jetson에서 `pio run -t upload`(esptool
+  `default_reset`)는 BOOT 없이 들어갔다. 안 되면 BOOT를 누른다
 - 시리얼 포트를 그냥 열면 DTR/RTS가 올라가면서 보드가 리셋되거나 부트 모드가 바뀐다.
   둘 다 내린 상태로 연 뒤 RTS를 한 번만 토글해 의도적으로 리셋한다
 - micro-ROS Agent가 포트를 잡고 있으면 업로드가 실패한다. 먼저 컨테이너를 내린다
@@ -107,4 +108,5 @@ ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.3}}'
 | `test_motor.py` | 드라이버·모터 없이 로직 검증 (6개 항목) |
 | `demo_led.py` | 듀티 변화 시연 |
 | `test_uros.sh` | ROS 2 토픽 연동 확인 |
-| `nl2cmdvel.sh` | 자연어 → 파인튜닝 모델 → `/cmd_vel` |
+| `nl2cmdvel.sh` | 자연어 → 파인튜닝 모델(llama-server) → `/cmd_vel` |
+| `pub_cmd_vel.py` | `/cmd_vel`을 정확히 duration초 발행 후 정지 명령 (ESP32 연결 뒤부터 계측) |

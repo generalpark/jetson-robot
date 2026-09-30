@@ -7,7 +7,7 @@ set -eu
 
 ROS_IMG="dustynv/ros:humble-ros-base-l4t-r36.3.0"
 run_ros() {
-  docker run --rm --net=host "${ROS_IMG}" \
+  docker run --rm --net=host --ipc=host "${ROS_IMG}" \
     bash -c "source /opt/ros/humble/install/setup.bash; $1"
 }
 
