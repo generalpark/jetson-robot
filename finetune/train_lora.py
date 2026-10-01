@@ -15,7 +15,7 @@ from datasets import Dataset
 from peft import LoraConfig, get_peft_model
 from transformers import (AutoModelForCausalLM, AutoTokenizer,
                           DataCollatorForSeq2Seq, Trainer, TrainerCallback,
-                          TrainingArguments)
+                          TrainingArguments, set_seed)
 
 class MemLog(TrainerCallback):
     """Per-step memory trace, fsync'd so it survives an OOM kill or reset.
@@ -91,7 +91,12 @@ def main():
     ap.add_argument("--memlog", default=None, help="write per-step memory trace here")
     ap.add_argument("--mem-fraction", type=float, default=0.6,
                     help="cap on the CUDA caching allocator; 0 disables")
+    ap.add_argument("--seed", type=int, default=None,
+                    help="LoRA 초기값·데이터 순서 시드. 같은 설정을 여러 번 학습해 편차를 잴 때")
     args = ap.parse_args()
+    if args.seed is not None:
+        # get_peft_model이 LoRA 가중치를 무작위로 초기화하므로 모델을 만들기 전에 고정한다
+        set_seed(args.seed)
     if args.mem_fraction > 0:
         # Jetson has no dedicated VRAM: whatever the caching allocator reserves
         # comes out of system RAM. Measured on 2026-09-30, live tensors stayed at
@@ -139,6 +144,7 @@ def main():
         fp16=True,
         report_to=[],
         gradient_checkpointing=True,
+        **({"seed": args.seed} if args.seed is not None else {}),
     )
 
     trainer = Trainer(

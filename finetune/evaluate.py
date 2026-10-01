@@ -100,6 +100,9 @@ def main():
     ap.add_argument("--test", default="test.jsonl")
     ap.add_argument("--out", default=None)
     ap.add_argument("--limit", type=int, default=0)
+    # 지정하지 않으면 모델의 generation_config를 따른다(Qwen2.5는 1.1).
+    # do_sample=False여도 반복 패널티는 적용된다. 1.0이면 순수 그리디
+    ap.add_argument("--repetition-penalty", type=float, default=None)
     args = ap.parse_args()
 
     tok = AutoTokenizer.from_pretrained(args.base)
@@ -130,7 +133,9 @@ def main():
         t0 = time.perf_counter()
         with torch.no_grad():
             gen = model.generate(**enc, max_new_tokens=64, do_sample=False,
-                                 pad_token_id=tok.pad_token_id)
+                                 pad_token_id=tok.pad_token_id,
+                                 **({"repetition_penalty": args.repetition_penalty}
+                                    if args.repetition_penalty is not None else {}))
         torch.cuda.synchronize()
         lat.append((time.perf_counter() - t0) / len(chunk))
 
