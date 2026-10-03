@@ -25,9 +25,12 @@ def metrics(cond, seed, rp):
 def main():
     cols = ["완전일치", "학습 어휘", "처음 보는 어휘", "부호", "잘못 거부", "비주행 거부", "비주행 움직임"]
     print(f"{'조건':<14}" + "".join(f"{c:>14}" for c in cols))
-    for cond, name in (("base", "기존"), ("rej", "거부 학습")):
+    for cond, name in (("base", "기존"), ("rej", "거부 학습"), ("rej1p5b", "거부 1.5B")):
         for rp in ("def", "1.0"):
-            runs = [metrics(cond, s, rp) for s in SEEDS]
+            try:
+                runs = [metrics(cond, s, rp) for s in SEEDS]
+            except FileNotFoundError:
+                continue
             cells = []
             for c in cols:
                 xs = [r[c] for r in runs]
