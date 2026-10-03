@@ -20,6 +20,13 @@
 constexpr int L_RPWM = 25, L_LPWM = 26;
 constexpr int R_RPWM = 32, R_LPWM = 33;
 constexpr int LED    = 2;
+// EN 핀은 펌웨어가 켠다. 점퍼선이 암-암뿐이라 3V3 한 핀을 VCC·R_EN·L_EN 여러 곳으로
+// 나눌 수 없어서 EN을 GPIO에 하나씩 물렸다. 덕분에 micro-ROS 연결 전에는 드라이버가 꺼져 있다.
+constexpr int L_R_EN = 27, L_L_EN = 18;
+constexpr int R_R_EN = 16, R_L_EN = 17;
+// 오른쪽 드라이버의 로직 전원(VCC). 3V3 핀은 왼쪽 드라이버가 쓴다.
+// 로직부(74HC244 + BTS7960 입력)는 수 mA 이하라 GPIO로 공급한다. 브레드보드가 생기면 3V3로 옮길 것
+constexpr int R_VCC = 23;
 constexpr int CH_L_R = 0, CH_L_L = 1, CH_R_R = 2, CH_R_L = 3, CH_LED = 4;
 constexpr int PWM_FREQ = 20000, PWM_BITS = 8;
 
@@ -74,7 +81,16 @@ void cmdVelCallback(const void *msgin) {
   stopped = false;
 }
 
+void enableDrivers(bool on) {
+  for (int pin : {L_R_EN, L_L_EN, R_R_EN, R_L_EN}) digitalWrite(pin, on ? HIGH : LOW);
+}
+
 void setup() {
+  // 부팅 직후 EN이 떠 있지 않게 가장 먼저 LOW로 묶는다
+  for (int pin : {L_R_EN, L_L_EN, R_R_EN, R_L_EN}) { pinMode(pin, OUTPUT); digitalWrite(pin, LOW); }
+  pinMode(R_VCC, OUTPUT);
+  digitalWrite(R_VCC, HIGH);
+
   ledcSetup(CH_L_R, PWM_FREQ, PWM_BITS); ledcAttachPin(L_RPWM, CH_L_R);
   ledcSetup(CH_L_L, PWM_FREQ, PWM_BITS); ledcAttachPin(L_LPWM, CH_L_L);
   ledcSetup(CH_R_R, PWM_FREQ, PWM_BITS); ledcAttachPin(R_RPWM, CH_R_R);
@@ -97,6 +113,7 @@ void setup() {
   rclc_executor_add_subscription(&executor, &sub_cmd_vel, &msg_in,
                                  &cmdVelCallback, ON_NEW_DATA);
   last_cmd_ms = millis();
+  enableDrivers(true);   // PWM이 0인 상태에서 켠다 — 양쪽 LOW라 브레이크 상태
 }
 
 void loop() {
