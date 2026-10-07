@@ -35,7 +35,9 @@ constexpr int PWM_FREQ = 20000, PWM_BITS = 8;
 //   170 / 60 * pi * 0.065 = 0.578 m/s
 // 무부하 회전수라 실제로는 더 낮다. 조립 후 실측해서 고칠 값이다.
 constexpr float MAX_SPEED   = 0.55f;   // m/s
-constexpr float WHEEL_BASE  = 0.15f;   // m, 좌우 바퀴 간격(설계값)
+constexpr float WHEEL_BASE  = 0.24f;   // m, 좌우 바퀴 중심 간격(박스 섀시 실측)
+// 좌우 모터가 거울상으로 달려서 배선이 같으면 오른쪽이 거꾸로 돈다(섀시 장착 후 확인)
+constexpr bool  INVERT_R    = true;
 
 constexpr uint32_t CMD_TIMEOUT_MS = 500;
 volatile uint32_t last_cmd_ms = 0;
@@ -72,6 +74,7 @@ void cmdVelCallback(const void *msgin) {
 
   int duty_l = (int)(v_l / MAX_SPEED * 255.0f);
   int duty_r = (int)(v_r / MAX_SPEED * 255.0f);
+  if (INVERT_R) duty_r = -duty_r;
 
   applyMotor(CH_L_R, CH_L_L, duty_l);
   applyMotor(CH_R_R, CH_R_L, duty_r);
