@@ -33,9 +33,13 @@ constexpr int PWM_FREQ = 20000, PWM_BITS = 8;
 // --- 로봇 치수 ---
 // JGA25-370 12V 170RPM + 65mm 바퀴 기준 이론 최고속도:
 //   170 / 60 * pi * 0.065 = 0.578 m/s
-// 무부하 회전수라 실제로는 더 낮다. 조립 후 실측해서 고칠 값이다.
-constexpr float MAX_SPEED   = 0.55f;   // m/s
+// 무부하 회전수라 실제로는 더 낮다. 박스 섀시 바닥 실측: 0.2 m/s x 1.5 s 명령에 27 cm(90%)
+constexpr float MAX_SPEED   = 0.50f;   // m/s
 constexpr float WHEEL_BASE  = 0.24f;   // m, 좌우 바퀴 중심 간격(박스 섀시 실측)
+// 4륜 스키드 조향은 제자리 회전에서 바퀴가 옆으로 미끄러져 덜 돈다.
+// 실측: 90도 명령에 45도(좌·우·좌 3회 같음). 속도 오차(90%)를 빼면 회전 효율 약 0.56
+constexpr float TURN_EFF    = 0.56f;
+constexpr float TRACK_EFF   = WHEEL_BASE / TURN_EFF;   // 약 0.43 m, 바퀴 속도 계산에 쓰는 유효 간격
 // 좌우 모터가 거울상으로 달려서 배선이 같으면 오른쪽이 거꾸로 돈다(섀시 장착 후 확인)
 constexpr bool  INVERT_R    = true;
 
@@ -69,8 +73,8 @@ void cmdVelCallback(const void *msgin) {
   float v = m->linear.x;      // m/s
   float w = m->angular.z;     // rad/s
 
-  float v_l = v - w * WHEEL_BASE / 2.0f;
-  float v_r = v + w * WHEEL_BASE / 2.0f;
+  float v_l = v - w * TRACK_EFF / 2.0f;
+  float v_r = v + w * TRACK_EFF / 2.0f;
 
   int duty_l = (int)(v_l / MAX_SPEED * 255.0f);
   int duty_r = (int)(v_r / MAX_SPEED * 255.0f);
