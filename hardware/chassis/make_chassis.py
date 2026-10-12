@@ -27,8 +27,9 @@ JETSON_Y0 = 40.0             # 틀 앞변
 STOP_GAP = 1.5               # 틀과 멈춤 기둥 사이 여유
 STOP_R = 3.0                 # 멈춤 기둥(M3 스페이서) 반지름
 PBANK = (61.0, 72.0)         # Baseus AC22 10000mAh (x, y)
-PBANK_Y0 = 150.0
-CAM_SLOT_Y = 15.0            # 카메라 판 끼우는 홈 중심
+PBANK_Y0 = 156.0
+CAM_SLOT_Y = 15.0            # 카메라 고정 자리(앞 가운데)
+# v3(10/12): 업체가 '단순 원형 타공'만 가능 → 긴 구멍·사각 홈·카메라 판(탭) 제거, 전부 원형 구멍
 
 # --- 카메라 판 (세워서 위층 홈에 끼우고 접착) ---
 CAM_W, CAM_H, TAB_H = 50.0, 47.0, 3.0   # 탭 포함 50 x 50 (재단 최소 50mm)
@@ -163,19 +164,19 @@ def upper_cut(add_circle, add_slot, add_rect):
         add_circle(jx0 - off, y, M3)
         add_circle(jx1 + off, y, M3)
     add_circle(W / 2, JETSON_Y0 - off, M3)   # 앞 멈춤 기둥 (뒤는 포트라 비움)
-    add_slot(W / 2, 140, 30, 12)             # ESP32 USB 선 통과
+    add_circle(W / 2, 142, 22)               # ESP32 USB 선 통과 (USB-A 플러그가 지나가는 지름)
     px0 = W / 2 - PBANK[0] / 2
-    for x in (px0 - 5.5, px0 + PBANK[0] + 5.5):   # 보조배터리 고정 끈
-        add_slot(x, PBANK_Y0 + PBANK[1] / 2, 4, 16)
-    for t0, t1 in TABS:                      # 카메라 판 탭 홈
-        add_rect(W / 2 - CAM_W / 2 + (t0 + t1) / 2, CAM_SLOT_Y, (t1 - t0) + 0.4, TAB_H + 0.4)
+    for x in (px0 - 5.5, px0 + PBANK[0] + 5.5):   # 보조배터리 고정 케이블타이 (양옆 2개씩)
+        for dy in (-6, 6):
+            add_circle(x, PBANK_Y0 + PBANK[1] / 2 + dy, 5)
+    for dx in (-10, 10):                     # 카메라 거치대(L 브래킷 등) 고정용 M3 — 나중에
+        add_circle(W / 2 + dx, CAM_SLOT_Y, M3)
 
 
 def upper_ref(ref_rect):
     ref_rect(W / 2 - JETSON[0] / 2, JETSON_Y0, *JETSON, "Jetson (포트 ↓뒤)")
     ref_rect(W / 2 - PBANK[0] / 2, PBANK_Y0, *PBANK, "보조배터리")
-    ref_rect(W / 2 - 12.5, CAM_SLOT_Y - 8, 25, 6, "", "under")
-    ref_rect(W / 2 - CAM_W / 2, CAM_SLOT_Y - 1.5, CAM_W, 3, "", "ref")
+    ref_rect(W / 2 - 15, CAM_SLOT_Y - 7, 30, 14, "카메라", "ref")
 
 
 def camera_plate(sheet, svg, ox, oy):
@@ -210,7 +211,7 @@ def main():
     sheet, svg = Sheet(), []
     plate(sheet, svg, 0, 0, "아래층 5mm (위에서 본 모습)", lower_cut, lower_ref)
     plate(sheet, svg, 230, 0, "위층 3mm (위에서 본 모습)", upper_cut, upper_ref)
-    camera_plate(sheet, svg, 460, 0)
+    # camera_plate(sheet, svg, 460, 0)  # v3: 업체 가공 범위 밖이라 이번 주문에서 제외
     sheet.write_dxf(OUT / "chassis.dxf")
     style = ("<style>.t{font:bold 14px sans-serif}.s{font:11px sans-serif;fill:#333}"
              ".plate{fill:#eaf4fb;stroke:#1f6fae;stroke-width:1.5}.hole{fill:#fff;stroke:#c0392b;stroke-width:1.2}"
