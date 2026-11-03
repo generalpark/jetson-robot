@@ -21,7 +21,7 @@ constexpr int L_RPWM = 25, L_LPWM = 26;
 constexpr int R_RPWM = 32, R_LPWM = 33;
 constexpr int LED    = 2;
 // EN 핀은 펌웨어가 켠다. 점퍼선이 암-암뿐이라 3V3 한 핀을 VCC·R_EN·L_EN 여러 곳으로
-// 나눌 수 없어서 EN을 GPIO에 하나씩 물렸다. 덕분에 micro-ROS 연결 전에는 드라이버가 꺼져 있다.
+// 나눌 수 없어서 EN을 GPIO에 하나씩 물렸다. 덕분에 부팅 중(초기화 전)에는 드라이버가 꺼져 있다.
 constexpr int L_R_EN = 27, L_L_EN = 18;
 constexpr int R_R_EN = 16, R_L_EN = 17;
 // 오른쪽 드라이버의 로직 전원(VCC). 3V3 핀은 왼쪽 드라이버가 쓴다.
