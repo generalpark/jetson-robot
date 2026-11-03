@@ -37,9 +37,12 @@ constexpr int PWM_FREQ = 20000, PWM_BITS = 8;
 constexpr float MAX_SPEED   = 0.50f;   // m/s
 constexpr float WHEEL_BASE  = 0.24f;   // m, 좌우 바퀴 중심 간격(박스 섀시 실측)
 // 4륜 스키드 조향은 제자리 회전에서 바퀴가 옆으로 미끄러져 덜 돈다.
-// 실측: 90도 명령에 45도(좌·우·좌 3회 같음). 속도 오차(90%)를 빼면 회전 효율 약 0.56
-constexpr float TURN_EFF    = 0.56f;
-constexpr float TRACK_EFF   = WHEEL_BASE / TURN_EFF;   // 약 0.43 m, 바퀴 속도 계산에 쓰는 유효 간격
+// 실측(박스 섀시 10/7): 90도 명령에 45도(좌·우·좌 3회 같음). 속도 오차(90%)를 빼면 회전 효율 약 0.56
+// 재보정(아크릴 2층 섀시 + Jetson + 보조배터리, 11/3): 0.56으로 90도 명령에 64.4도·67.5도(평균 65.9도)
+// -> 비례로 0.41을 넣었더니 112.2도로 넘침(빨리 돌수록 덜 미끄러져 비례가 안 맞음)
+// -> 두 점(1/0.56 -> 65.9도, 1/0.41 -> 112.2도)을 직선으로 이어 90도가 되는 0.47
+constexpr float TURN_EFF    = 0.47f;
+constexpr float TRACK_EFF   = WHEEL_BASE / TURN_EFF;   // 약 0.51 m, 바퀴 속도 계산에 쓰는 유효 간격
 // 좌우 모터가 거울상으로 달려서 배선이 같으면 오른쪽이 거꾸로 돈다(섀시 장착 후 확인)
 constexpr bool  INVERT_R    = true;
 
