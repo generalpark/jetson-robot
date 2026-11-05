@@ -9,7 +9,10 @@
   2. 매 프레임, 로봇 폭에 해당하는 가운데 통로에서 바닥 색에서 많이 벗어난 픽셀을 찾는다
      (처음엔 HSV 히스토그램을 썼는데 나뭇결·조명 차이로 바닥 곳곳이 물체로 잡혀 바꿨다. --method hist로 남겨 둠)
   3. 열마다 아래에서 위로 올라가며 '바닥 아님'이 연속으로 나오는 첫 지점 = 그 열의 장애물 밑변
-  4. 밑변이 정지선(기본 화면 높이의 74%, 11/4 실측으로 몸통 앞 약 30cm)보다 아래면 가까운 것
+  4. 밑변이 정지선보다 아래면 가까운 것. 정지선은 전진 속도에 따라 움직인다:
+     목표 30cm + (속도 x 0.17초 + 속도^2 x 0.91)만큼 먼 곳 — 처음엔 속도 비례(0.2초)로 했는데
+     0.3m/s에서 23cm에 서서 제동 거리(속도 제곱) 항을 더했다. 거리는 (y - 수평선) = k / 거리로 환산
+     (--fixed면 화면 높이 74% 고정, 11/4 실측으로 몸통 앞 약 30cm)
   5. 가까운 열이 통로의 일정 비율 이상이고 3프레임 연속이면 막고, 6프레임 연속 비면 푼다
 
 막으면 브릿지가 달리던 전진을 끊고 새 전진을 거절한다. 회전·후진은 된다.
@@ -26,7 +29,13 @@ import numpy as np
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--snapshot", default="http://127.0.0.1:8090/snapshot.jpg")
-ap.add_argument("--stop-y", type=float, default=0.74, help="정지선(화면 높이 비율). 클수록 더 가까워야 멈춘다")
+ap.add_argument("--stop-y", type=float, default=0.74, help="(--fixed일 때) 정지선(화면 높이 비율)")
+ap.add_argument("--fixed", action="store_true", help="속도와 상관없이 --stop-y 고정 정지선 사용")
+ap.add_argument("--target", type=float, default=30.0, help="멈춘 뒤 앞에 남길 거리(cm)")
+ap.add_argument("--lag", type=float, default=0.17, help="정지 반응 지연(s): 더 가는 거리 = v*lag + v^2*brake")
+ap.add_argument("--brake", type=float, default=0.91, help="제동 계수(s^2/m). 11/5 실측: 0.15m/s 4.6cm, 0.3m/s 13.3cm 더 감 -> lag 0.17, brake 0.91")
+ap.add_argument("--horizon", type=float, default=0.347, help="바닥 수평선 높이(화면 비율, 11/4 실측)")
+ap.add_argument("--k", type=float, default=12.4, help="바닥 거리 환산 상수: 거리(cm) = k / (y - horizon). 30cm->0.75, 20cm->0.98 실측으로 맞춤")
 ap.add_argument("--corridor", type=float, default=0.45, help="가운데 통로 폭(화면 폭 비율)")
 ap.add_argument("--min-cols", type=float, default=0.12, help="통로 열 중 이 비율 이상이 가까우면 장애물")
 ap.add_argument("--thresh", type=float, default=0.15, help="(hist) 바닥 히스토그램 역투영 값이 이보다 낮으면 '바닥 아님'")
@@ -58,7 +67,24 @@ def send(obj):
 
 x0 = int(W * (1 - args.corridor) / 2)
 x1 = W - x0
-y_stop = int(H * args.stop_y)
+def stop_line(v):
+    """전진 속도 v(m/s)일 때의 정지선 y(픽셀). 빨리 달릴수록 정지가 늦으므로 선을 먼 쪽(위)으로 올린다.
+    바닥 위 물체의 밑변 높이 y와 거리 d는 (y - 수평선) = k / d 관계(카메라 높이 고정, 바닥 평면)."""
+    if args.fixed:
+        return int(H * args.stop_y)
+    v = max(v, 0.0)
+    d = args.target + 100.0 * (v * args.lag + v * v * args.brake)   # cm. 제동 거리는 속도 제곱에 비례
+    return int(H * (args.horizon + args.k / d))
+
+
+def bridge_speed():
+    try:
+        return float(json.loads(send({"status": True})).get("linear", 0.0))
+    except Exception:
+        return 0.0
+
+
+y_stop = stop_line(0.0)
 
 # 1. 바닥 기억: 맨 아래 8% 띠, 통로 부분
 first = grab()
@@ -115,6 +141,8 @@ while True:
     any_hit = hit.any(axis=0)
     first_k = np.argmax(hit, axis=0)
     bottoms[any_hit] = (H - 1 - first_k[any_hit])
+    v = bridge_speed()
+    y_stop = stop_line(v)
     near_cols = int(np.sum(bottoms >= y_stop))
     near = near_cols >= args.min_cols * (x1 - x0)
 
@@ -122,7 +150,7 @@ while True:
     clear_streak = 0 if near else clear_streak + 1
     if not blocked and near_streak >= 3:
         blocked = True
-        print(f"[guard] 앞에 물체 — 정지 ({near_cols}열)", send({"block": True}), flush=True)
+        print(f"[guard] 앞에 물체 — 정지 ({near_cols}열, v={v:.2f}m/s, 정지선 y={y_stop})", send({"block": True}), flush=True)
     elif blocked and clear_streak >= 6:
         blocked = False
         print("[guard] 비었음 — 해제", send({"block": False}), flush=True)

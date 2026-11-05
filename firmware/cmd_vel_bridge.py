@@ -12,6 +12,8 @@
   {"block": true}   -> 진행 중인 전진을 즉시 멈추고, 풀릴 때까지 새 전진 명령은 거절한다
   {"block": false}  -> 해제. 멈췄던 전진은 다시 이어 가지 않는다(물체가 치워졌다고 저절로 출발하면 위험)
 회전·후진은 막지 않는다 — 막힌 곳에서 빠져나와야 하므로.
+상태 조회: {"status": true} -> 응답에 지금 내보내는 전진 속도 "linear"(멈춰 있으면 0)를 더한다.
+  가드가 속도에 맞춰 정지 거리를 늘리는 데 쓴다.
 """
 import json
 import socket
@@ -62,6 +64,10 @@ class Bridge:
                 self.stops_left = STOP_REPEAT
             self.next_pub = now
 
+    def current_linear(self):
+        with self.lock:
+            return self.lin if time.monotonic() < self.until else 0.0
+
     def tick(self):
         now = time.monotonic()
         with self.lock:
@@ -93,7 +99,9 @@ def serve(bridge):
         with conn:
             try:
                 cmd = json.loads(conn.makefile("r", encoding="utf-8").readline())
-                if "block" in cmd:
+                if "status" in cmd:
+                    pass
+                elif "block" in cmd:
                     bridge.set_block(bool(cmd["block"]))
                 else:
                     lin, ang, dur = (float(cmd[k]) for k in ("linear", "angular", "duration"))
@@ -101,7 +109,7 @@ def serve(bridge):
                         raise ValueError(f"duration {dur}")
                     bridge.set(lin, ang, dur)
                 reply = {"ok": True, "subscribers": bridge.pub.get_subscription_count(),
-                         "blocked": bridge.blocked}
+                         "blocked": bridge.blocked, "linear": bridge.current_linear()}
             except Exception as e:           # 잘못된 입력은 거절만 하고 계속 돈다
                 reply = {"ok": False, "error": str(e)}
             conn.sendall((json.dumps(reply) + "\n").encode("utf-8"))
