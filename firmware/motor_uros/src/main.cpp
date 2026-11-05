@@ -5,6 +5,7 @@
  * Jetson에서 micro-ROS Agent를 띄우면 이 보드가 ROS 2 노드로 참여한다.
  *
  *   [상위]  /cmd_vel  ->  micro-ROS Agent  --USB시리얼-->  ESP32  ->  BTS7960
+ *   [하위]  /wheel_ticks <- 좌우 앞바퀴 엔코더 누적 카운트(Int32MultiArray [왼쪽, 오른쪽], 20 Hz)
  *
  * 안전장치는 시리얼 버전과 같다. 명령이 끊기면 스스로 멈춘다.
  * 상위가 죽었을 때 마지막 속도로 계속 달리는 것이 가장 위험하기 때문이다.
@@ -15,6 +16,8 @@
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
 #include <geometry_msgs/msg/twist.h>
+#include <std_msgs/msg/int32_multi_array.h>
+#include "driver/pcnt.h"
 
 // --- 핀 배치 (시리얼 버전과 동일) ---
 constexpr int L_RPWM = 25, L_LPWM = 26;
@@ -46,12 +49,29 @@ constexpr float TRACK_EFF   = WHEEL_BASE / TURN_EFF;   // 약 0.51 m, 바퀴 속
 // 좌우 모터가 거울상으로 달려서 배선이 같으면 오른쪽이 거꾸로 돈다(섀시 장착 후 확인)
 constexpr bool  INVERT_R    = true;
 
+// --- 엔코더 (JGA25-370 홀, 11PPR x 감속 35, 4체배 -> 바퀴 한 바퀴 1540) ---
+// 앞바퀴 좌우 하나씩. A·B는 입력 전용 핀, 엔코더 전원·GND는 GND 핀이 모자라 GPIO로 준다(수 mA).
+// 손으로 앞으로 한 바퀴 돌린 실측(11/5): 오른쪽 +1552, 왼쪽 -1512 -> 왼쪽은 부호를 뒤집어 둘 다 앞으로 +.
+struct Enc { pcnt_unit_t unit; int a, b, vcc, gnd; int sign; int32_t total; };
+Enc enc_l = {PCNT_UNIT_1, 36, 39, 13, 14, -1, 0};   // 보드 표기 UP / NU
+Enc enc_r = {PCNT_UNIT_0, 34, 35,  4, 15, +1, 0};
+constexpr uint32_t TICKS_PERIOD_MS = 50;           // 20 Hz
+// 거리 환산용(상위에서 씀): 카탈로그 65 mm로 계산하면 실제보다 4.5% 짧게 나왔다.
+// 0.2 m/s x 1.5 s 주행(11/5): 줄자 왼쪽 30.0 / 오른쪽 29.7 cm, 엔코더(65 mm 기준) 28.7 / 28.4 cm
+// -> 좌우 모두 1.045배 -> 유효 지름 67.9 mm (자로 잰 타이어 지름 약 67 mm와 맞음)
+constexpr float WHEEL_DIAMETER = 0.0679f;          // m
+constexpr float COUNTS_PER_REV = 11.0f * 35.0f * 4.0f;   // 1540, 손으로 한 바퀴 실측 1512~1552
+
 constexpr uint32_t CMD_TIMEOUT_MS = 500;
 volatile uint32_t last_cmd_ms = 0;
 volatile bool stopped = true;
 
 rcl_subscription_t sub_cmd_vel;
 geometry_msgs__msg__Twist msg_in;
+rcl_publisher_t pub_ticks;
+std_msgs__msg__Int32MultiArray msg_ticks;
+int32_t ticks_buf[2];
+uint32_t last_ticks_ms = 0;
 rclc_executor_t executor;
 rclc_support_t support;
 rcl_allocator_t allocator;
@@ -91,6 +111,35 @@ void cmdVelCallback(const void *msgin) {
   stopped = false;
 }
 
+void setupEnc(Enc& e) {
+  pinMode(e.gnd, OUTPUT); digitalWrite(e.gnd, LOW);
+  pinMode(e.vcc, OUTPUT); digitalWrite(e.vcc, HIGH);
+  pinMode(e.a, INPUT); pinMode(e.b, INPUT);
+  pcnt_config_t c = {};
+  c.unit = e.unit; c.counter_h_lim = 32767; c.counter_l_lim = -32768;
+  c.channel = PCNT_CHANNEL_0; c.pulse_gpio_num = e.a; c.ctrl_gpio_num = e.b;
+  c.pos_mode = PCNT_COUNT_DEC; c.neg_mode = PCNT_COUNT_INC;
+  c.lctrl_mode = PCNT_MODE_REVERSE; c.hctrl_mode = PCNT_MODE_KEEP;
+  pcnt_unit_config(&c);
+  c.channel = PCNT_CHANNEL_1; c.pulse_gpio_num = e.b; c.ctrl_gpio_num = e.a;
+  c.pos_mode = PCNT_COUNT_INC; c.neg_mode = PCNT_COUNT_DEC;
+  pcnt_unit_config(&c);
+  pcnt_set_filter_value(e.unit, 100);   // 80 MHz 기준 1.25 us 미만 잡음 무시
+  pcnt_filter_enable(e.unit);
+  pcnt_counter_pause(e.unit);
+  pcnt_counter_clear(e.unit);
+  pcnt_counter_resume(e.unit);
+}
+
+// 하드웨어 카운터는 16비트라 주기적으로 비우고 32비트에 누적한다.
+// 최고속도(약 2.8바퀴/s = 4300카운트/s)에서도 50 ms 동안 수백 카운트라 넘칠 일이 없다.
+void readEnc(Enc& e) {
+  int16_t v = 0;
+  pcnt_get_counter_value(e.unit, &v);
+  pcnt_counter_clear(e.unit);
+  e.total += e.sign * v;
+}
+
 void enableDrivers(bool on) {
   for (int pin : {L_R_EN, L_L_EN, R_R_EN, R_L_EN}) digitalWrite(pin, on ? HIGH : LOW);
 }
@@ -98,6 +147,8 @@ void enableDrivers(bool on) {
 void setup() {
   // 부팅 직후 EN이 떠 있지 않게 가장 먼저 LOW로 묶는다
   for (int pin : {L_R_EN, L_L_EN, R_R_EN, R_L_EN}) { pinMode(pin, OUTPUT); digitalWrite(pin, LOW); }
+  setupEnc(enc_l);
+  setupEnc(enc_r);
   pinMode(R_VCC, OUTPUT);
   digitalWrite(R_VCC, HIGH);
 
@@ -118,6 +169,15 @@ void setup() {
   rclc_subscription_init_default(
       &sub_cmd_vel, &node,
       ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist), "cmd_vel");
+  rclc_publisher_init_best_effort(
+      &pub_ticks, &node,
+      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray), "wheel_ticks");
+  msg_ticks.data.data = ticks_buf;            // 동적 할당 없이 고정 버퍼 2칸
+  msg_ticks.data.size = 2;
+  msg_ticks.data.capacity = 2;
+  msg_ticks.layout.dim.size = 0;
+  msg_ticks.layout.dim.capacity = 0;
+  msg_ticks.layout.data_offset = 0;
 
   rclc_executor_init(&executor, &support.context, 1, &allocator);
   rclc_executor_add_subscription(&executor, &sub_cmd_vel, &msg_in,
@@ -131,5 +191,14 @@ void loop() {
 
   if (!stopped && millis() - last_cmd_ms > CMD_TIMEOUT_MS) {
     driveStop();   // 상위에서 명령이 끊겼다
+  }
+
+  if (millis() - last_ticks_ms >= TICKS_PERIOD_MS) {
+    last_ticks_ms += TICKS_PERIOD_MS;
+    readEnc(enc_l);
+    readEnc(enc_r);
+    ticks_buf[0] = enc_l.total;
+    ticks_buf[1] = enc_r.total;
+    rcl_publish(&pub_ticks, &msg_ticks, NULL);
   }
 }
