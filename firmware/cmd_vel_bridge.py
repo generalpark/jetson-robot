@@ -7,6 +7,11 @@
 새 명령은 진행 중인 명령을 바로 덮어쓴다. 예전 방식은 스크립트가 주행 시간만큼
 붙잡혀 있어 달리는 중에 "멈춰"를 보낼 수 없었다.
 응답: {"ok": true, "subscribers": <구독자 수>}  — 0이면 ESP32가 붙어 있지 않다는 뜻이다.
+
+전방 차단(카메라 obstacle_guard.py가 보낸다):
+  {"block": true}   -> 진행 중인 전진을 즉시 멈추고, 풀릴 때까지 새 전진 명령은 거절한다
+  {"block": false}  -> 해제. 멈췄던 전진은 다시 이어 가지 않는다(물체가 치워졌다고 저절로 출발하면 위험)
+회전·후진은 막지 않는다 — 막힌 곳에서 빠져나와야 하므로.
 """
 import json
 import socket
@@ -32,11 +37,23 @@ class Bridge:
         self.until = 0.0          # 이 시각까지 현재 명령을 보낸다
         self.next_pub = 0.0
         self.stops_left = 0
+        self.blocked = False
         node.create_timer(TICK_S, self.tick)
+
+    def set_block(self, on):
+        now = time.monotonic()
+        with self.lock:
+            self.blocked = on
+            if on and self.lin > 0 and now < self.until:   # 달리던 전진은 그 자리에서 끊는다
+                self.until = 0.0
+                self.stops_left = STOP_REPEAT
+                self.next_pub = now
 
     def set(self, lin, ang, dur):
         now = time.monotonic()
         with self.lock:
+            if self.blocked and lin > 0 and dur > 0:
+                raise ValueError("blocked: 앞에 장애물 — 전진 거절")
             if dur > 0 and (lin or ang):
                 self.lin, self.ang, self.until = lin, ang, now + dur
                 self.stops_left = STOP_REPEAT
@@ -76,11 +93,15 @@ def serve(bridge):
         with conn:
             try:
                 cmd = json.loads(conn.makefile("r", encoding="utf-8").readline())
-                lin, ang, dur = (float(cmd[k]) for k in ("linear", "angular", "duration"))
-                if not 0 <= dur <= MAX_DURATION:
-                    raise ValueError(f"duration {dur}")
-                bridge.set(lin, ang, dur)
-                reply = {"ok": True, "subscribers": bridge.pub.get_subscription_count()}
+                if "block" in cmd:
+                    bridge.set_block(bool(cmd["block"]))
+                else:
+                    lin, ang, dur = (float(cmd[k]) for k in ("linear", "angular", "duration"))
+                    if not 0 <= dur <= MAX_DURATION:
+                        raise ValueError(f"duration {dur}")
+                    bridge.set(lin, ang, dur)
+                reply = {"ok": True, "subscribers": bridge.pub.get_subscription_count(),
+                         "blocked": bridge.blocked}
             except Exception as e:           # 잘못된 입력은 거절만 하고 계속 돈다
                 reply = {"ok": False, "error": str(e)}
             conn.sendall((json.dumps(reply) + "\n").encode("utf-8"))
